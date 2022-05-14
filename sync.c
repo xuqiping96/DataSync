@@ -1,18 +1,3 @@
-/**
- *
- * @file sync.c
- * @author 智识之道
- * @brief 数据同步（涉及信号量、锁、多线程等）
- * @version 0.1
- * @date 2021-12-31
- *
- * @copyright Copyright (c) 2021
- *
- */
-
-///////////////////////////////////////////////////////////////////////////////
-//头文件区域
-
 #include <stdlib.h>
 #include <stdio.h>
 #include <limits.h>
@@ -22,10 +7,6 @@
 #include <semaphore.h>
 
 
-
-///////////////////////////////////////////////////////////////////////////////
-//宏定义区域
-
 //缓冲区大小，测试的时候自己可以修改这个参数，建议不要设置那么大，小于10以内的方便观察。
 #define BUFFER_SIZE 9
 //随机休眠的秒数，这里设置为（缓冲区大小-1），即为随机休眠0～（缓冲区大小-1）秒
@@ -33,8 +14,6 @@
 //默认值
 #define BUFFER_DEFAULT_VALUE -1
 
-///////////////////////////////////////////////////////////////////////////////
-//结构体区域
 
 /**
  * @brief 命令行参数
@@ -58,8 +37,7 @@ typedef struct
     int id;
 } ThreadParameter;
 
-///////////////////////////////////////////////////////////////////////////////
-//变量区域
+
 
 //命令行参数
 CommandLineArgument commandLineArgument;
@@ -74,10 +52,14 @@ int producerBufferIndex = 0;
 //消费者读缓冲区索引
 int consumerBufferIndex = 0;
 
-// TODO：锁、信号量等必要的在这里自行添加
+//表示缓冲区空的数量的信号量
+sem_t empty;
+//表示缓冲区满的数量的信号量
+sem_t full;
+//缓冲区读写的互斥锁
+pthread_mutex_t buffer_lock;
 
-///////////////////////////////////////////////////////////////////////////////
-//函数区域
+
 
 /**
  * @brief 解析命令行参数
@@ -127,7 +109,17 @@ void initRandom()
  */
 void initSemaphore()
 {
-    printf("TODO: initSemaphore\n");
+    int err;
+
+    err = sem_init(&empty, 0, BUFFER_SIZE);
+    if(err != 0) {
+        printf("empty semaphore init error.\n");
+    }
+
+    err = sem_init(&full, 0, 0);
+    if(err != 0) {
+        printf("full semaphore init error.\n");
+    }
 }
 
 /**
@@ -136,7 +128,12 @@ void initSemaphore()
  */
 void initLock()
 {
-    printf("TODO: initLock\n");
+    int err;
+
+    err = pthread_mutex_init(&buffer_lock, NULL);
+    if(err != 0) {
+        printf("mutex lock init error.\n");
+    }
 }
 
 /**
@@ -176,6 +173,11 @@ void dumpBuffer()
 int insertData(int value)
 {
     int dataIdx;
+
+    if(buffer[producerBufferIndex] != -1) {
+        printf("Insert data into a full buffer:\n");
+    }
+
     buffer[producerBufferIndex] = value;
     dataIdx = producerBufferIndex;
     producerBufferIndex = (producerBufferIndex + 1) % BUFFER_SIZE;
@@ -193,6 +195,11 @@ int removeData(int *value)
 {
     int dataIdx;
     *value = buffer[consumerBufferIndex];
+
+    if(buffer[consumerBufferIndex] == -1) {
+        printf("Remove data from an empty buffer:\n");
+    }
+
     buffer[consumerBufferIndex] = -1;
     dataIdx = consumerBufferIndex;
     consumerBufferIndex = (consumerBufferIndex + 1) % BUFFER_SIZE;
@@ -246,8 +253,16 @@ void *producerRoutine(void *arg)
 
     while(1) {
         sleep(generateRandomSleepTime());
+
+        sem_wait(&empty);
+        pthread_mutex_lock(&buffer_lock);
+
         value = generateRandomValue();
         dataIdx = insertData(value);
+
+        sem_post(&full);
+        pthread_mutex_unlock(&buffer_lock);
+
         printf("Producer[%d] insert value 0x%08x into buffer[%d]\n", producer->id, value, dataIdx);
     } 
 }
@@ -272,7 +287,15 @@ void *consumerRoutine(void *arg)
 
     while(1) {
         sleep(generateRandomSleepTime());
+
+        sem_wait(&full);
+        pthread_mutex_lock(&buffer_lock);
+
         dataIdx = removeData(&value);
+
+        sem_post(&empty);
+        pthread_mutex_unlock(&buffer_lock);
+
         printf("Consumer[%d] remove value 0x%08x from buffer[%d]\n", consumer->id, value, dataIdx);
     }
 }
@@ -326,7 +349,23 @@ void createConsumerThreads()
  *
  */
 void intSig(int sig) {
+    int err;
+    
     dumpBuffer();
+
+    err = sem_destroy(&empty);
+    if(err != 0) {
+        printf("destroy empty semaphore error.\n");
+    }
+    err = sem_destroy(&full);
+    if(err != 0) {
+        printf("destroy full semaphore error.\n");
+    }
+    err = pthread_mutex_destroy(&buffer_lock);
+    if(err != 0) {
+        printf("destroy mutex lock error.\n");
+    }
+    
     free(producerThreadParameter);
     free(consumerThreadParameter);
     exit(0);
